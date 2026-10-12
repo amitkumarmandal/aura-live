@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Aura Live — Demo Client</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <h1>Aura Live</h1>
+    <p class="subtitle">Static demo client — host on GitHub Pages</p>
+  </header>
+
+  <main class="container">
+    <section class="panel">
+      <h2>Live Status</h2>
+      <div id="status" class="status disconnected">Disconnected</div>
+      <div class="controls">
+        <button id="connectBtn">Connect (demo)</button>
+        <button id="simMsgBtn" disabled>Simulate message</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Live Feed</h2>
+      <ul id="feed" class="feed"></ul>
+    </section>
+
+    <section class="panel">
+      <h2>How to use</h2>
+      <ol>
+        <li>Edit index.html to point the WebSocket to your endpoint (see script below).</li>
+        <li>Push the repo to GitHub and enable Pages at the repository root.</li>
+        <li>Open https://&lt;your-username&gt;.github.io/aura-live/</li>
+      </ol>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <small>Made for GitHub Pages demo</small>
+  </footer>
+
+  <script>
+    const wsUrl = 'wss://example.com/live';
+    let socket = null;
+
+    const statusEl = document.getElementById('status');
+    const feedEl = document.getElementById('feed');
+    const connectBtn = document.getElementById('connectBtn');
+    const simMsgBtn = document.getElementById('simMsgBtn');
+
+    function setStatus(connected) {
+      statusEl.textContent = connected ? 'Connected' : 'Disconnected';
+      statusEl.className = connected ? 'status connected' : 'status disconnected';
+      simMsgBtn.disabled = !connected;
+    }
+
+    function addFeedItem(text) {
+      const li = document.createElement('li');
+      li.textContent = `${new Date().toLocaleTimeString()}: ${text}`;
+      feedEl.prepend(li);
+    }
+
+    connectBtn.addEventListener('click', () => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.close();
+        return;
+      }
+      if (wsUrl.includes('example.com')) {
+        setStatus(true);
+        addFeedItem('Demo connection established (local simulation).');
+        return;
+      }
+      socket = new WebSocket(wsUrl);
+      socket.addEventListener('open', () => setStatus(true));
+      socket.addEventListener('message', (ev) => addFeedItem(ev.data));
+      socket.addEventListener('close', () => setStatus(false));
+      socket.addEventListener('error', () => setStatus(false));
+    });
+
+    simMsgBtn.addEventListener('click', () => {
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+      }
+      addFeedItem('Simulated incoming message');
+    });
+
+    setStatus(false);
+  </script>
+</body>
+</html>
