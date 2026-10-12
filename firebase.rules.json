@@ -1,0 +1,40 @@
+{
+  "rules": {
+    "shared_tours": {
+      "$tourId": {
+        ".read": true,
+        "meta": {
+          ".read": true,
+          ".write": "auth != null && (data.val() == null || data.child('leader_id').val() == auth.uid)"
+        },
+        "members": {
+          ".read": true,
+          "$memberId": {
+            ".write": "auth != null",
+            "web_last_seen": {
+              ".validate": "newData.isNumber()"
+            },
+            "is_active_online": {
+              ".validate": "newData.isBoolean()"
+            }
+          }
+        },
+        "live_locations": {
+          ".read": true,
+          "$memberId": {
+            ".write": true,
+            ".validate": "newData.hasChildren(['member_id', 'member_name', 'latitude', 'longitude', 'is_online', 'timestamp']) && newData.child('member_id').isString() && newData.child('member_name').isString() && newData.child('latitude').isNumber() && newData.child('latitude').val() >= -90 && newData.child('latitude').val() <= 90 && newData.child('longitude').isNumber() && newData.child('longitude').val() >= -180 && newData.child('longitude').val() <= 180 && newData.child('is_online').isBoolean() && newData.child('timestamp').isNumber()"
+          }
+        },
+        "markers": {
+          ".read": true,
+          ".write": "auth != null"
+        },
+        "sos_alerts": {
+          ".read": true,
+          ".write": true
+        }
+      }
+    }
+  }
+}
