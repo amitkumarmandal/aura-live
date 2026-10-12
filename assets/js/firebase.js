@@ -112,26 +112,57 @@ export async function fetchTourData(tourId) {
 }
 
 /**
- * Matches a user against the tour members list using phone or memberId/token override.
- * If the member is not yet in RTDB, constructs a provisional member identity from the phone number.
+ * Matches a user against the tour members list using memberId, phone, or token override.
+ * If the member is not yet in RTDB, constructs a provisional member identity from memberId/phone/name.
  * @param {object|array} membersData
- * @param {string} phone
+ * @param {string|null} phone
  * @param {string|null} memberIdOverride
  * @param {string|null} tokenOverride
+ * @param {string|null} memberNameOverride
  * @returns {{memberId: string, memberName: string, contact: string, role: string, isActive: boolean}|null}
  */
-export function findMatchingMember(membersData, phone, memberIdOverride = null, tokenOverride = null) {
+export function findMatchingMember(membersData, phone, memberIdOverride = null, tokenOverride = null, memberNameOverride = null) {
     const list = !membersData
         ? []
         : (Array.isArray(membersData)
             ? membersData.filter(Boolean)
             : Object.entries(membersData).map(([key, val]) => ({ ...(val || {}), _key: key })));
 
-    // 1. Direct match by memberId override
-    if (memberIdOverride) {
-        const found = list.find(m => (m.memberId === memberIdOverride || m.id === memberIdOverride || m._key === memberIdOverride));
+    const cleanOverrideId = memberIdOverride ? String(memberIdOverride).trim() : null;
+    const lowerOverrideId = cleanOverrideId ? cleanOverrideId.toLowerCase() : null;
+    const prefixedOverrideId = lowerOverrideId && !lowerOverrideId.startsWith('member_')
+        ? `member_${lowerOverrideId}`
+        : lowerOverrideId;
+
+    // 1. Direct match by memberId override (case-insensitive & prefix-resilient)
+    if (lowerOverrideId) {
+        const found = list.find(m => {
+            const candidates = [
+                m.memberId,
+                m.rawMemberId,
+                m.id,
+                m._key,
+                m.id ? `member_${m.id}` : null,
+                m.rawMemberId ? `member_${m.rawMemberId}` : null
+            ]
+                .filter(Boolean)
+                .map(x => String(x).toLowerCase());
+            return candidates.includes(lowerOverrideId) || (prefixedOverrideId && candidates.includes(prefixedOverrideId));
+        });
         if (found) {
-            return normalizeMemberRecord(found);
+            return normalizeMemberRecord(found, memberNameOverride, phone);
+        }
+
+        // Also check if memberIdOverride embeds a 10-digit phone (e.g. "member_9876543210")
+        const embeddedDigits = cleanOverrideId.replace(/\D/g, '').slice(-10);
+        if (embeddedDigits.length === 10) {
+            const foundByEmbeddedPhone = list.find(m => {
+                const memberPhone = m.contact || m.phone || m.mobile || m.leaderContact || '';
+                return matchPhoneNumbers(memberPhone, embeddedDigits);
+            });
+            if (foundByEmbeddedPhone) {
+                return normalizeMemberRecord(foundByEmbeddedPhone, memberNameOverride, embeddedDigits);
+            }
         }
     }
 
@@ -139,7 +170,7 @@ export function findMatchingMember(membersData, phone, memberIdOverride = null, 
     if (tokenOverride) {
         const found = list.find(m => m.token === tokenOverride || m.code === tokenOverride);
         if (found) {
-            return normalizeMemberRecord(found);
+            return normalizeMemberRecord(found, memberNameOverride, phone);
         }
     }
 
@@ -150,15 +181,18 @@ export function findMatchingMember(membersData, phone, memberIdOverride = null, 
             return matchPhoneNumbers(memberPhone, phone);
         });
         if (found) {
-            return normalizeMemberRecord(found);
+            return normalizeMemberRecord(found, memberNameOverride, phone);
         }
 
         // 4. Provisional member identity constructed directly from phone number
         const digits = String(phone).replace(/\D/g, '').slice(-10);
         if (digits.length >= 4) {
+            const canonicalId = cleanOverrideId
+                ? (cleanOverrideId.startsWith('member_') ? cleanOverrideId : `member_${cleanOverrideId}`)
+                : `member_${digits}`;
             return {
-                memberId: `member_${digits}`,
-                memberName: `Member (${digits.slice(-4)})`,
+                memberId: canonicalId,
+                memberName: memberNameOverride || `Member (${digits.slice(-4)})`,
                 contact: digits,
                 role: 'MEMBER',
                 isActive: true
@@ -166,11 +200,18 @@ export function findMatchingMember(membersData, phone, memberIdOverride = null, 
         }
     }
 
-    if (memberIdOverride) {
+    // 5. Provisional member identity constructed from memberIdOverride (works even when member has no phone)
+    if (cleanOverrideId) {
+        const canonicalId = cleanOverrideId.startsWith('member_') ? cleanOverrideId : `member_${cleanOverrideId}`;
+        const embeddedDigits = cleanOverrideId.replace(/\D/g, '').slice(-10);
+        const inferredPhone = embeddedDigits.length === 10 ? embeddedDigits : (phone || '');
+        const fallbackLabel = embeddedDigits.length >= 4
+            ? `Member (${embeddedDigits.slice(-4)})`
+            : `Rider (${cleanOverrideId.replace(/^member_/i, '')})`;
         return {
-            memberId: memberIdOverride,
-            memberName: `Rider (${memberIdOverride})`,
-            contact: phone || '',
+            memberId: canonicalId,
+            memberName: memberNameOverride || fallbackLabel,
+            contact: inferredPhone,
             role: 'MEMBER',
             isActive: true
         };
@@ -179,10 +220,10 @@ export function findMatchingMember(membersData, phone, memberIdOverride = null, 
     return null;
 }
 
-function normalizeMemberRecord(raw) {
-    const memberId = raw.memberId || raw.id || raw._key || 'rider_web';
-    const memberName = raw.memberName || raw.name || 'Expedition Member';
-    const contact = raw.contact || raw.phone || raw.mobile || '';
+function normalizeMemberRecord(raw, nameFallback = null, phoneFallback = null) {
+    const memberId = raw.memberId || raw._key || (raw.id ? `member_${raw.id}` : 'rider_web');
+    const memberName = raw.memberName || raw.name || nameFallback || 'Expedition Member';
+    const contact = raw.contact || raw.phone || raw.mobile || phoneFallback || '';
     const role = raw.role || 'MEMBER';
     const isActive = raw.isActive !== false;
 
@@ -246,6 +287,8 @@ export async function writeLivePosition(tourId, memberId, memberName, coords, ba
     try {
         const memberPresenceRef = ref(dbInstance, `shared_tours/${tourId}/members/${memberId}`);
         await update(memberPresenceRef, {
+            memberId,
+            memberName,
             web_last_seen: Date.now(),
             is_active_online: true
         });
@@ -259,15 +302,28 @@ export async function writeLivePosition(tourId, memberId, memberName, coords, ba
 /**
  * Records that a member opened their tracking link (even before GPS fix is acquired)
  * @param {string} tourId
- * @param {string} memberId
+ * @param {object|string} memberOrId
  */
-export async function recordMemberLinkOpened(tourId, memberId) {
-    if (!dbInstance || !tourId || !memberId) return;
+export async function recordMemberLinkOpened(tourId, memberOrId) {
+    if (!dbInstance || !tourId || !memberOrId) return;
+    const memberId = typeof memberOrId === 'string' ? memberOrId : memberOrId.memberId;
+    if (!memberId) return;
+
     try {
         const memberPresenceRef = ref(dbInstance, `shared_tours/${tourId}/members/${memberId}`);
-        await update(memberPresenceRef, {
+        const payload = {
+            memberId,
             web_last_seen: Date.now()
-        });
+        };
+        if (typeof memberOrId === 'object') {
+            if (memberOrId.memberName) payload.memberName = memberOrId.memberName;
+            if (memberOrId.contact) {
+                payload.phone = memberOrId.contact;
+                payload.contact = memberOrId.contact;
+            }
+            if (memberOrId.role) payload.role = memberOrId.role;
+        }
+        await update(memberPresenceRef, payload);
     } catch {
         // Non-blocking if members node is restricted
     }

@@ -28,6 +28,7 @@ const state = {
     tourId: null,
     phone: null,
     memberIdParam: null,
+    memberNameParam: null,
     tokenParam: null,
     customDbUrl: null,
     matchedMember: null,
@@ -82,31 +83,53 @@ const elements = {
 };
 
 /**
- * Parses query parameters from URL supporting aliases
+ * Case-insensitive lookup across URLSearchParams for any matching key alias
+ */
+function getQueryParamCaseInsensitive(params, candidateKeys) {
+    const lowerCandidates = candidateKeys.map(k => k.toLowerCase());
+    for (const [key, value] of params.entries()) {
+        if (lowerCandidates.includes(key.toLowerCase()) && value && value.trim() !== '') {
+            return value.trim();
+        }
+    }
+    return null;
+}
+
+/**
+ * Parses query parameters from URL supporting case-insensitive tourid, memberid, phone, name, token, and db
  */
 function parseUrlParameters() {
     const params = new URLSearchParams(window.location.search);
 
-    const tour = params.get('tour') || params.get('t') || params.get('tid') || params.get('tourId') || params.get('id');
-    const phone = params.get('phone') || params.get('p') || params.get('mobile') || params.get('contact');
-    const m = params.get('m') || params.get('memberId');
-    const k = params.get('k') || params.get('token');
-    const db = params.get('db');
+    const tour = getQueryParamCaseInsensitive(params, ['tourid', 'tourId', 'tour_id', 'tour', 'tid', 't', 'id']);
+    const memberId = getQueryParamCaseInsensitive(params, ['memberid', 'memberId', 'member_id', 'mid', 'm']);
+    const phone = getQueryParamCaseInsensitive(params, ['phone', 'p', 'mobile', 'contact']);
+    const memberName = getQueryParamCaseInsensitive(params, ['name', 'membername', 'memberName', 'member_name']);
+    const token = getQueryParamCaseInsensitive(params, ['token', 'k', 'code']);
+    const db = getQueryParamCaseInsensitive(params, ['db', 'database', 'rtdb']);
 
-    state.tourId = tour ? tour.trim() : null;
-    state.phone = phone ? phone.trim() : null;
-    state.memberIdParam = m ? m.trim() : null;
-    state.tokenParam = k ? k.trim() : null;
-    state.customDbUrl = db ? decodeURIComponent(db.trim()) : null;
+    state.tourId = tour;
+    state.memberIdParam = memberId;
+    state.phone = phone;
+    state.memberNameParam = memberName ? decodeURIComponent(memberName) : null;
+    state.tokenParam = token;
+    state.customDbUrl = db ? decodeURIComponent(db) : null;
 
-    // Sanitize address bar for privacy: keep ?tour=..., remove raw phone
+    // Ensure address bar preserves tourid and memberid for page reloads while masking raw phone if memberid is present
     if (state.tourId) {
         const cleanUrl = new URL(window.location.href);
-        cleanUrl.searchParams.delete('phone');
-        cleanUrl.searchParams.delete('p');
-        cleanUrl.searchParams.delete('mobile');
-        cleanUrl.searchParams.delete('contact');
-        window.history.replaceState({}, document.title, cleanUrl.toString());
+        const derivedMemberId = state.memberIdParam || (state.phone ? `member_${String(state.phone).replace(/\D/g, '').slice(-10)}` : null);
+        if (derivedMemberId) {
+            state.memberIdParam = derivedMemberId;
+            if (!cleanUrl.searchParams.has('memberid') && !cleanUrl.searchParams.has('memberId')) {
+                cleanUrl.searchParams.set('memberid', derivedMemberId);
+            }
+            cleanUrl.searchParams.delete('phone');
+            cleanUrl.searchParams.delete('p');
+            cleanUrl.searchParams.delete('mobile');
+            cleanUrl.searchParams.delete('contact');
+            window.history.replaceState({}, document.title, cleanUrl.toString());
+        }
     }
 }
 
@@ -191,15 +214,15 @@ async function initApp() {
     if (!state.tourId) {
         displayFatalError(
             'Incomplete Link',
-            'Missing Tour ID parameter in URL. Please open the link sent by your tour leader.'
+            'Missing Tour ID (tourid) parameter in URL. Please open the link sent by your tour leader.'
         );
         return;
     }
 
-    if (!state.phone && !state.memberIdParam && !state.tokenParam) {
+    if (!state.memberIdParam && !state.phone && !state.tokenParam) {
         displayFatalError(
-            'Missing Phone',
-            'This link does not specify your registered mobile number (?tour=&phone=). Ask your tour leader for your member tracking link.'
+            'Missing Member ID',
+            'This link does not specify your Member ID or mobile number (?tourid=&memberid=). Ask your tour leader for your member tracking link.'
         );
         return;
     }
@@ -223,18 +246,19 @@ async function initApp() {
             return;
         }
 
-        // 4. Match user phone to member
+        // 4. Match user by memberId, phone, or token
         const matched = findMatchingMember(
             tourData.members,
             state.phone,
             state.memberIdParam,
-            state.tokenParam
+            state.tokenParam,
+            state.memberNameParam
         );
 
         if (!matched) {
             displayFatalError(
                 'Registration Not Found',
-                `Mobile number (${maskPhoneNumber(state.phone)}) is not registered in this tour. Please verify your contact with the expedition host.`
+                `Member (${state.memberIdParam || maskPhoneNumber(state.phone)}) could not be verified for this tour. Please check your link with the expedition host.`
             );
             return;
         }
@@ -248,7 +272,7 @@ async function initApp() {
         }
 
         state.matchedMember = matched;
-        recordMemberLinkOpened(state.tourId, matched.memberId);
+        recordMemberLinkOpened(state.tourId, matched);
 
         // 5. Populate UI
         elements.skeletonLoader.classList.add('hidden');
@@ -260,7 +284,10 @@ async function initApp() {
         elements.tourHost.textContent = state.tourMeta.leaderName || 'Aura Host';
 
         elements.welcomeMember.textContent = `Welcome, ${matched.memberName}`;
-        elements.memberPhoneMasked.textContent = maskPhoneNumber(matched.contact || state.phone);
+        const rawContact = matched.contact || state.phone || '';
+        elements.memberPhoneMasked.textContent = rawContact
+            ? maskPhoneNumber(rawContact)
+            : `ID: ${matched.memberId}`;
 
         const phase = evaluateTourPhase(state.tourMeta.startDate, state.tourMeta.endDate);
         elements.phaseBadge.textContent = phase.label;
