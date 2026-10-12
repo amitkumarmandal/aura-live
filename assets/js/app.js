@@ -86,8 +86,8 @@ const elements = {
 function parseUrlParameters() {
     const params = new URLSearchParams(window.location.search);
 
-    const tour = params.get('tour') || params.get('t') || params.get('tid') || params.get('tourId');
-    const phone = params.get('phone') || params.get('p') || params.get('mobile');
+    const tour = params.get('tour') || params.get('t') || params.get('tid') || params.get('tourId') || params.get('id');
+    const phone = params.get('phone') || params.get('p') || params.get('mobile') || params.get('contact');
     const m = params.get('m') || params.get('memberId');
     const k = params.get('k') || params.get('token');
     const db = params.get('db');
@@ -104,6 +104,7 @@ function parseUrlParameters() {
         cleanUrl.searchParams.delete('phone');
         cleanUrl.searchParams.delete('p');
         cleanUrl.searchParams.delete('mobile');
+        cleanUrl.searchParams.delete('contact');
         window.history.replaceState({}, document.title, cleanUrl.toString());
     }
 }
@@ -197,7 +198,7 @@ async function initApp() {
     if (!state.phone && !state.memberIdParam && !state.tokenParam) {
         displayFatalError(
             'Missing Phone',
-            'This link does not specify your registered mobile number. Ask your tour leader for an invite link with your phone number.'
+            'This link does not specify your registered mobile number (?tour=&phone=). Ask your tour leader for your member tracking link.'
         );
         return;
     }
@@ -211,6 +212,15 @@ async function initApp() {
         // 3. Fetch Tour metadata and registered members
         const tourData = await fetchTourData(state.tourId);
         state.tourMeta = tourData.meta;
+
+        // Check optional link expiration window if enabled on the tour
+        if (state.tourMeta.isExpirationEnabled && state.tourMeta.expiresAt > 0 && Date.now() > state.tourMeta.expiresAt) {
+            displayFatalError(
+                'Tracking Link Expired',
+                'This tour tracking link has passed its active expiration window. Ask the tour host to extend or refresh the link in Tour Sharing Hub.'
+            );
+            return;
+        }
 
         // 4. Match user phone to member
         const matched = findMatchingMember(

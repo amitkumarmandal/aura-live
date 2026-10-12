@@ -70,21 +70,19 @@ export async function fetchTourData(tourId) {
     const tourRef = ref(dbInstance, `shared_tours/${tourId}`);
     const snapshot = await get(tourRef);
 
-    if (!snapshot.exists()) {
-        throw new Error(`Tour with ID "${tourId}" does not exist in Realtime Database.`);
-    }
-
-    const data = snapshot.val() || {};
+    const data = snapshot.exists() ? (snapshot.val() || {}) : {};
 
     // Support both root-level fields and nested 'meta' child
     const metaSource = data.meta || data;
-    const title = metaSource.title || data.title || 'Aura Expedition';
-    const destination = metaSource.destination || data.destination || data.location || '';
+    const title = metaSource.title || data.title || `Aura Expedition #${tourId}`;
+    const destination = metaSource.destination || data.destination || data.location || 'Active Expedition Route';
     const leaderName = metaSource.leaderName || data.leaderName || 'Tour Leader';
     const leaderContact = metaSource.leaderContact || data.leaderContact || '';
     const startDate = metaSource.startDate || data.startDate || '';
     const endDate = metaSource.endDate || data.endDate || '';
     const apkLink = metaSource.apkLink || data.apkLink || '';
+    const expiresAt = metaSource.expiresAt || data.expiresAt || 0;
+    const isExpirationEnabled = metaSource.isExpirationEnabled === true;
 
     // Calculate online rider count
     let activeRidersCount = 0;
@@ -103,7 +101,9 @@ export async function fetchTourData(tourId) {
             leaderContact,
             startDate,
             endDate,
-            apkLink
+            apkLink,
+            expiresAt,
+            isExpirationEnabled
         },
         members,
         activeRidersCount,
@@ -112,7 +112,8 @@ export async function fetchTourData(tourId) {
 }
 
 /**
- * Matches a user against the tour members list using phone or memberId/token override
+ * Matches a user against the tour members list using phone or memberId/token override.
+ * If the member is not yet in RTDB, constructs a provisional member identity from the phone number.
  * @param {object|array} membersData
  * @param {string} phone
  * @param {string|null} memberIdOverride
@@ -120,11 +121,11 @@ export async function fetchTourData(tourId) {
  * @returns {{memberId: string, memberName: string, contact: string, role: string, isActive: boolean}|null}
  */
 export function findMatchingMember(membersData, phone, memberIdOverride = null, tokenOverride = null) {
-    if (!membersData) return null;
-
-    const list = Array.isArray(membersData)
-        ? membersData.filter(Boolean)
-        : Object.entries(membersData).map(([key, val]) => ({ ...(val || {}), _key: key }));
+    const list = !membersData
+        ? []
+        : (Array.isArray(membersData)
+            ? membersData.filter(Boolean)
+            : Object.entries(membersData).map(([key, val]) => ({ ...(val || {}), _key: key })));
 
     // 1. Direct match by memberId override
     if (memberIdOverride) {
@@ -151,6 +152,28 @@ export function findMatchingMember(membersData, phone, memberIdOverride = null, 
         if (found) {
             return normalizeMemberRecord(found);
         }
+
+        // 4. Provisional member identity constructed directly from phone number
+        const digits = String(phone).replace(/\D/g, '').slice(-10);
+        if (digits.length >= 4) {
+            return {
+                memberId: `member_${digits}`,
+                memberName: `Member (${digits.slice(-4)})`,
+                contact: digits,
+                role: 'MEMBER',
+                isActive: true
+            };
+        }
+    }
+
+    if (memberIdOverride) {
+        return {
+            memberId: memberIdOverride,
+            memberName: `Rider (${memberIdOverride})`,
+            contact: phone || '',
+            role: 'MEMBER',
+            isActive: true
+        };
     }
 
     return null;
