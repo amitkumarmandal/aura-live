@@ -7,6 +7,7 @@ import {
     fetchTourData,
     findMatchingMember,
     writeLivePosition,
+    recordMemberLinkOpened,
     markMemberOffline
 } from './firebase.js';
 
@@ -247,6 +248,7 @@ async function initApp() {
         }
 
         state.matchedMember = matched;
+        recordMemberLinkOpened(state.tourId, matched.memberId);
 
         // 5. Populate UI
         elements.skeletonLoader.classList.add('hidden');

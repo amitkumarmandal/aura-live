@@ -257,6 +257,23 @@ export async function writeLivePosition(tourId, memberId, memberName, coords, ba
 }
 
 /**
+ * Records that a member opened their tracking link (even before GPS fix is acquired)
+ * @param {string} tourId
+ * @param {string} memberId
+ */
+export async function recordMemberLinkOpened(tourId, memberId) {
+    if (!dbInstance || !tourId || !memberId) return;
+    try {
+        const memberPresenceRef = ref(dbInstance, `shared_tours/${tourId}/members/${memberId}`);
+        await update(memberPresenceRef, {
+            web_last_seen: Date.now()
+        });
+    } catch {
+        // Non-blocking if members node is restricted
+    }
+}
+
+/**
  * Marks member as offline when stopping live broadcast
  * @param {string} tourId
  * @param {string} memberId
