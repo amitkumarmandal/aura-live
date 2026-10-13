@@ -5,6 +5,8 @@
 import {
     initFirebaseService,
     fetchTourData,
+    fetchMemberById,
+    decryptAuraToken,
     findMatchingMember,
     writeLivePosition,
     recordMemberLinkOpened,
@@ -137,13 +139,13 @@ function getQueryParamCaseInsensitive(params, candidateKeys) {
 }
 
 /**
- * Parses query parameters from URL supporting simple tourid, memberid, phonenumber,
+ * Parses query parameters from URL supporting encrypted tokens and plain tourid, memberid, phonenumber,
  * and dynamic Tour Sharing Hub display options without modifying the browser address bar.
  */
-function parseUrlParameters() {
+async function parseUrlParameters() {
     const params = new URLSearchParams(window.location.search);
 
-    state.tourId = getQueryParamCaseInsensitive(params, [
+    const rawTourId = getQueryParamCaseInsensitive(params, [
         'tourid',
         'tour_id',
         'tour',
@@ -151,13 +153,13 @@ function parseUrlParameters() {
         't',
         'id'
     ]);
-    state.memberIdParam = getQueryParamCaseInsensitive(params, [
+    const rawMemberId = getQueryParamCaseInsensitive(params, [
         'memberid',
         'member_id',
         'mid',
         'm'
     ]);
-    state.phone = getQueryParamCaseInsensitive(params, [
+    const rawPhone = getQueryParamCaseInsensitive(params, [
         'phonenumber',
         'phone_number',
         'phone',
@@ -165,12 +167,17 @@ function parseUrlParameters() {
         'contact',
         'p'
     ]);
+    const rawToken = getQueryParamCaseInsensitive(params, ['token', 'k', 'code']);
+
+    state.tourId = rawTourId ? await decryptAuraToken(rawTourId) : null;
+    state.memberIdParam = rawMemberId ? await decryptAuraToken(rawMemberId) : null;
+    state.phone = rawPhone ? await decryptAuraToken(rawPhone) : null;
+    state.tokenParam = rawToken ? await decryptAuraToken(rawToken) : null;
     state.memberNameParam = getQueryParamCaseInsensitive(params, [
         'name',
         'membername',
         'member_name'
     ]);
-    state.tokenParam = getQueryParamCaseInsensitive(params, ['token', 'k', 'code']);
     state.customDbUrl = getQueryParamCaseInsensitive(params, ['db', 'database', 'rtdb']);
 
     // Dynamic Tour Sharing Hub display parameters
@@ -599,7 +606,7 @@ function renderTourAndMemberUI(tourData, matched) {
  * Initializes the page on load
  */
 async function initApp() {
-    parseUrlParameters();
+    await parseUrlParameters();
 
     // 1. Validate required URL parameters (tourid and memberid or phonenumber)
     if (!state.tourId) {
@@ -626,25 +633,38 @@ async function initApp() {
     elements.toggleBtn.onclick = toggleLiveTracking;
     elements.copyCoordsBtn.onclick = copyCoordinatesToClipboard;
 
-    const provisionalMember = findMatchingMember(
-        {},
-        state.phone,
-        state.memberIdParam,
-        state.tokenParam,
-        state.memberNameParam
-    );
-    state.matchedMember = provisionalMember;
+    // Direct lookup: fetch member record immediately by memberid/phone so member name is retrieved without delay
+    let initialMember = null;
+    try {
+        await initFirebaseService(state.customDbUrl);
+        const directMember = await fetchMemberById(state.tourId, state.memberIdParam, state.phone);
+        if (directMember) {
+            initialMember = directMember;
+        }
+    } catch {
+        // Fallback to offline provisional member
+    }
+
+    if (!initialMember) {
+        initialMember = findMatchingMember(
+            {},
+            state.phone,
+            state.memberIdParam,
+            state.tokenParam,
+            state.memberNameParam
+        );
+    }
+    state.matchedMember = initialMember;
     state.tourMeta = buildInitialMetaFromUrl();
 
     renderTourAndMemberUI(
         { meta: state.tourMeta, activeRidersCount: 0 },
-        provisionalMember
+        initialMember
     );
-    setLog(`Ready as ${provisionalMember.memberName}. Tap Start Live Tracking to broadcast GPS.`);
+    setLog(`Ready as ${initialMember.memberName}. Tap Start Live Tracking to broadcast GPS.`);
 
     // 3. Initialize Firebase REST service & fetch cloud tour metadata non-blockingly
     try {
-        await initFirebaseService(state.customDbUrl);
         const tourData = await fetchTourData(state.tourId);
         state.tourMeta = mergeCloudAndUrlMeta(tourData.meta, tourData.syncedFromCloud);
 
@@ -745,64 +765,74 @@ async function startLiveTracking() {
         timeout: 15000
     };
 
-    state.watchId = navigator.geolocation.watchPosition(
-        async (position) => {
-            state.isTracking = true;
-            const coords = position.coords;
-            state.currentCoords = coords;
-            const timestamp = formatTime(position.timestamp);
+    const handlePositionUpdate = async (position) => {
+        state.isTracking = true;
+        const coords = position.coords;
+        state.currentCoords = coords;
+        const timestamp = formatTime(position.timestamp);
 
-            // Format coordinates
-            const formatted = formatCoordinates(coords.latitude, coords.longitude);
-            elements.latVal.textContent = formatted.latStr;
-            elements.lngVal.textContent = formatted.lngStr;
+        // Format coordinates
+        const formatted = formatCoordinates(coords.latitude, coords.longitude);
+        elements.latVal.textContent = formatted.latStr;
+        elements.lngVal.textContent = formatted.lngStr;
 
-            // Secondary metrics
-            elements.accVal.textContent = `${Math.round(coords.accuracy)} m`;
-            elements.spdVal.textContent = formatSpeed(coords.speed);
-            elements.updateTimer.textContent = timestamp;
+        // Secondary metrics
+        elements.accVal.textContent = `${Math.round(coords.accuracy)} m`;
+        elements.spdVal.textContent = formatSpeed(coords.speed);
+        elements.updateTimer.textContent = timestamp;
 
-            const fix = evaluateAccuracy(coords.accuracy);
-            elements.fixVal.textContent = fix.label;
-            elements.fixVal.className = `font-mono font-bold ${fix.className} mt-0.5`;
+        const fix = evaluateAccuracy(coords.accuracy);
+        elements.fixVal.textContent = fix.label;
+        elements.fixVal.className = `font-mono font-bold ${fix.className} mt-0.5`;
 
-            // Update Open in Maps link
-            elements.openMapsLink.href = `https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`;
-            elements.mapActions.classList.remove('hidden');
+        // Update Open in Maps link
+        elements.openMapsLink.href = `https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`;
+        elements.mapActions.classList.remove('hidden');
 
-            // Render Leaflet Mini-Map
-            updateMiniMap(coords.latitude, coords.longitude, coords.accuracy);
+        // Render Leaflet Mini-Map
+        updateMiniMap(coords.latitude, coords.longitude, coords.accuracy);
 
-            // Update UI status to LIVE
-            elements.statusBadge.className = 'flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm';
-            elements.statusDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500 live-pulse-emerald';
-            elements.statusText.textContent = 'LIVE ACTIVE';
+        // Update UI status to LIVE
+        elements.statusBadge.className = 'flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold tracking-wide bg-emerald-50 text-emerald-700 border border-emerald-200 shadow-sm';
+        elements.statusDot.className = 'w-1.5 h-1.5 rounded-full bg-emerald-500 live-pulse-emerald';
+        elements.statusText.textContent = 'LIVE ACTIVE';
 
-            // Switch button to Stop
-            elements.toggleBtn.className = 'w-full py-3.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-md shadow-red-500/25 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 border border-white/20';
-            elements.btnIcon.className = 'fa-solid fa-stop text-xs';
-            elements.btnText.textContent = 'Stop Sharing Telemetry';
+        // Switch button to Stop
+        elements.toggleBtn.className = 'w-full py-3.5 px-4 rounded-xl font-bold text-xs uppercase tracking-wider bg-gradient-to-r from-red-600 via-rose-600 to-red-700 text-white shadow-md shadow-red-500/25 active:scale-[0.98] transition-all flex items-center justify-center space-x-2 border border-white/20';
+        elements.btnIcon.className = 'fa-solid fa-stop text-xs';
+        elements.btnText.textContent = 'Stop Sharing Telemetry';
 
-            // Check throttler before broadcasting to Firebase
-            if (state.throttler.shouldSend(coords)) {
-                try {
-                    await writeLivePosition(
-                        state.tourId,
-                        state.matchedMember.memberId,
-                        state.matchedMember.memberName,
-                        coords,
-                        state.currentBattery,
-                        maskPhoneNumber(state.matchedMember.contact || state.phone)
-                    );
-                    state.throttler.recordSent(coords);
-                    setLog(`Telemetry broadcast at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
-                } catch {
-                    setLog(`Fix active at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
-                }
-            } else {
-                setLog(`Fix acquired at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
+        // Check throttler before broadcasting to Firebase
+        if (state.throttler.shouldSend(coords)) {
+            try {
+                await writeLivePosition(
+                    state.tourId,
+                    state.matchedMember.memberId,
+                    state.matchedMember.memberName,
+                    coords,
+                    state.currentBattery,
+                    maskPhoneNumber(state.matchedMember.contact || state.phone)
+                );
+                state.throttler.recordSent(coords);
+                setLog(`Telemetry broadcast at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
+            } catch {
+                setLog(`Fix active at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
             }
-        },
+        } else {
+            setLog(`Fix acquired at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
+        }
+    };
+
+    // 1. Immediate instantaneous fix via getCurrentPosition (parallel)
+    navigator.geolocation.getCurrentPosition(
+        handlePositionUpdate,
+        () => { /* Silent fallback to watchPosition */ },
+        { enableHighAccuracy: true, timeout: 6000, maximumAge: 0 }
+    );
+
+    // 2. Continuous position stream via watchPosition
+    state.watchId = navigator.geolocation.watchPosition(
+        handlePositionUpdate,
         (error) => {
             let userMessage = 'Unable to acquire precise GPS fix.';
             if (error.code === error.PERMISSION_DENIED) {
