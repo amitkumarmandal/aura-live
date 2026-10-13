@@ -1,4 +1,4 @@
-/* Aura Live - Global Styles & Responsive System */
+/* Aura Live - Global Styles & Responsive Glassmorphic Design System */
 
 * {
     box-sizing: border-box;
@@ -13,27 +13,59 @@
 }
 
 html, body {
-    height: 100%;
+    min-height: 100%;
     margin: 0;
     padding: 0;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #e2e8f0 100%);
+    background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 50%, #eef2ff 100%);
     color: #0f172a;
     -webkit-font-smoothing: antialiased;
 }
 
+/* Ambient Decorative Orbs */
+.ambient-orb {
+    position: absolute;
+    border-radius: 9999px;
+    filter: blur(64px);
+    opacity: 0.45;
+}
+
+.orb-indigo {
+    width: 280px;
+    height: 280px;
+    top: -80px;
+    left: -60px;
+    background: radial-gradient(circle, rgba(99, 102, 241, 0.35) 0%, rgba(99, 102, 241, 0) 70%);
+}
+
+.orb-teal {
+    width: 260px;
+    height: 260px;
+    bottom: -60px;
+    right: -60px;
+    background: radial-gradient(circle, rgba(13, 148, 136, 0.3) 0%, rgba(13, 148, 136, 0) 70%);
+}
+
+.orb-rose {
+    width: 220px;
+    height: 220px;
+    top: 40%;
+    right: -80px;
+    background: radial-gradient(circle, rgba(244, 63, 94, 0.2) 0%, rgba(244, 63, 94, 0) 70%);
+}
+
 /* Glassmorphism Components */
 .light-glass {
-    background: rgba(255, 255, 255, 0.88);
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
-    border: 1px solid rgba(226, 232, 240, 0.85);
-    box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05), 0 8px 10px -6px rgba(0, 0, 0, 0.04);
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    box-shadow: 0 12px 28px -6px rgba(15, 23, 42, 0.06), 0 4px 12px -4px rgba(15, 23, 42, 0.04);
 }
 
 .light-card {
-    background: rgba(248, 250, 252, 0.92);
-    border: 1px solid rgba(226, 232, 240, 0.7);
+    background: rgba(248, 250, 252, 0.95);
+    border: 1px solid rgba(226, 232, 240, 0.8);
 }
 
 /* Radar Pulse Animations */
@@ -80,7 +112,7 @@ html, body {
 
 /* Leaflet Map Styling */
 #miniMap {
-    height: 140px;
+    height: 135px;
     width: 100%;
     border-radius: 12px;
     z-index: 10;
@@ -94,7 +126,7 @@ html, body {
 
 /* Safe Area Insets for Mobile */
 .pb-safe {
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
 }
 
 .pt-safe {
@@ -109,18 +141,22 @@ html, body {
     }
 
     .light-glass {
-        background: rgba(15, 23, 42, 0.82);
-        border: 1px solid rgba(51, 65, 85, 0.6);
-        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.4);
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(51, 65, 85, 0.65);
+        box-shadow: 0 12px 28px -6px rgba(0, 0, 0, 0.45);
     }
 
     .light-card {
-        background: rgba(30, 41, 59, 0.7);
-        border: 1px solid rgba(51, 65, 85, 0.5);
+        background: rgba(30, 41, 59, 0.75);
+        border: 1px solid rgba(51, 65, 85, 0.55);
     }
 
     .text-slate-900 {
         color: #f8fafc !important;
+    }
+
+    .text-slate-800 {
+        color: #f1f5f9 !important;
     }
 
     .text-slate-700 {

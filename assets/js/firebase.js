@@ -80,6 +80,22 @@ export async function fetchTourData(tourId) {
             leaderContact: '',
             startDate: '',
             endDate: '',
+            durationDays: 0,
+            durationNights: 0,
+            addedMembersCount: 0,
+            memberCapacity: 0,
+            totalEstimate: 0,
+            perPersonEstimate: 0,
+            lodgingAmount: 0,
+            lodgingPct: 0,
+            foodAmount: 0,
+            foodPct: 0,
+            travelAmount: 0,
+            travelPct: 0,
+            otherAmount: 0,
+            otherPct: 0,
+            webDisplayFlags: null,
+            webDisplayOptions: null,
             apkLink: '',
             expiresAt: 0,
             isExpirationEnabled: false
@@ -118,6 +134,9 @@ export async function fetchTourData(tourId) {
             activeRidersCount = riders.filter(r => r && r.is_online === true).length;
         }
 
+        const membersObj = data.members || {};
+        const cloudMembersCount = typeof membersObj === 'object' ? Object.keys(membersObj).length : 0;
+
         return {
             meta: {
                 title,
@@ -126,11 +145,27 @@ export async function fetchTourData(tourId) {
                 leaderContact,
                 startDate,
                 endDate,
+                durationDays: Number(metaSource.durationDays || 0),
+                durationNights: Number(metaSource.durationNights || 0),
+                addedMembersCount: Number(metaSource.addedMembersCount || cloudMembersCount || 0),
+                memberCapacity: Number(metaSource.memberCapacity || cloudMembersCount || 0),
+                totalEstimate: Number(metaSource.totalEstimate || 0),
+                perPersonEstimate: Number(metaSource.perPersonEstimate || 0),
+                lodgingAmount: Number(metaSource.lodgingAmount || 0),
+                lodgingPct: Number(metaSource.lodgingPct || 0),
+                foodAmount: Number(metaSource.foodAmount || 0),
+                foodPct: Number(metaSource.foodPct || 0),
+                travelAmount: Number(metaSource.travelAmount || 0),
+                travelPct: Number(metaSource.travelPct || 0),
+                otherAmount: Number(metaSource.otherAmount || 0),
+                otherPct: Number(metaSource.otherPct || 0),
+                webDisplayFlags: metaSource.webDisplayFlags || null,
+                webDisplayOptions: metaSource.webDisplayOptions || null,
                 apkLink,
                 expiresAt,
                 isExpirationEnabled
             },
-            members: data.members || {},
+            members: membersObj,
             activeRidersCount,
             liveLocations: data.live_locations || {},
             syncedFromCloud: true
