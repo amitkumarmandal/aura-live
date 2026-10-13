@@ -16,7 +16,6 @@ import {
     formatSpeed,
     evaluateAccuracy,
     formatTime,
-    normalizePhoneNumber,
     maskPhoneNumber,
     createPositionThrottler,
     getBatteryLevel,
@@ -96,41 +95,48 @@ function getQueryParamCaseInsensitive(params, candidateKeys) {
 }
 
 /**
- * Parses query parameters from URL supporting case-insensitive tourid, memberid, phone, name, token, and db
+ * Parses query parameters from URL supporting simple tourid, memberid, and phonenumber/phone
+ * without modifying or rewriting the browser address bar URL.
  */
 function parseUrlParameters() {
     const params = new URLSearchParams(window.location.search);
 
-    const tour = getQueryParamCaseInsensitive(params, ['tourid', 'tourId', 'tour_id', 'tour', 'tid', 't', 'id']);
-    const memberId = getQueryParamCaseInsensitive(params, ['memberid', 'memberId', 'member_id', 'mid', 'm']);
-    const phone = getQueryParamCaseInsensitive(params, ['phone', 'p', 'mobile', 'contact']);
-    const memberName = getQueryParamCaseInsensitive(params, ['name', 'membername', 'memberName', 'member_name']);
+    const tour = getQueryParamCaseInsensitive(params, [
+        'tourid',
+        'tour_id',
+        'tour',
+        'tid',
+        't',
+        'id'
+    ]);
+    const memberId = getQueryParamCaseInsensitive(params, [
+        'memberid',
+        'member_id',
+        'mid',
+        'm'
+    ]);
+    const phone = getQueryParamCaseInsensitive(params, [
+        'phonenumber',
+        'phone_number',
+        'phone',
+        'mobile',
+        'contact',
+        'p'
+    ]);
+    const memberName = getQueryParamCaseInsensitive(params, [
+        'name',
+        'membername',
+        'member_name'
+    ]);
     const token = getQueryParamCaseInsensitive(params, ['token', 'k', 'code']);
     const db = getQueryParamCaseInsensitive(params, ['db', 'database', 'rtdb']);
 
     state.tourId = tour;
     state.memberIdParam = memberId;
     state.phone = phone;
-    state.memberNameParam = memberName ? decodeURIComponent(memberName) : null;
+    state.memberNameParam = memberName;
     state.tokenParam = token;
-    state.customDbUrl = db ? decodeURIComponent(db) : null;
-
-    // Ensure address bar preserves tourid and memberid for page reloads while masking raw phone if memberid is present
-    if (state.tourId) {
-        const cleanUrl = new URL(window.location.href);
-        const derivedMemberId = state.memberIdParam || (state.phone ? `member_${String(state.phone).replace(/\D/g, '').slice(-10)}` : null);
-        if (derivedMemberId) {
-            state.memberIdParam = derivedMemberId;
-            if (!cleanUrl.searchParams.has('memberid') && !cleanUrl.searchParams.has('memberId')) {
-                cleanUrl.searchParams.set('memberid', derivedMemberId);
-            }
-            cleanUrl.searchParams.delete('phone');
-            cleanUrl.searchParams.delete('p');
-            cleanUrl.searchParams.delete('mobile');
-            cleanUrl.searchParams.delete('contact');
-            window.history.replaceState({}, document.title, cleanUrl.toString());
-        }
-    }
+    state.customDbUrl = db;
 }
 
 /**
@@ -188,10 +194,12 @@ export function closeModal() {
 window.closeModal = closeModal;
 
 /**
- * Appends log ticker entry with timestamp
+ * Updates log ticker entry
  */
 function setLog(message) {
-    elements.logTicker.textContent = message;
+    if (elements.logTicker) {
+        elements.logTicker.textContent = message;
+    }
 }
 
 /**
@@ -205,35 +213,94 @@ function displayFatalError(title, message) {
 }
 
 /**
+ * Updates the UI with the current tour metadata and matched member
+ */
+function renderTourAndMemberUI(tourData, matched) {
+    if (elements.skeletonLoader) elements.skeletonLoader.classList.add('hidden');
+    if (elements.errorCard) elements.errorCard.classList.add('hidden');
+    if (elements.mainView) elements.mainView.classList.remove('hidden');
+
+    const meta = tourData.meta;
+    elements.tourTitle.textContent = meta.title || `Aura Expedition #${state.tourId}`;
+    elements.tourDestination.textContent = meta.destination || 'Live Expedition Route';
+    elements.tourDates.textContent = formatTourDates(meta.startDate, meta.endDate);
+    elements.tourHost.textContent = meta.leaderName || 'Tour Leader';
+
+    elements.welcomeMember.textContent = `Welcome, ${matched.memberName}`;
+    const rawContact = matched.contact || state.phone || '';
+    const displayId = (matched.rawMemberId || matched.memberId || '').replace(/^member_/i, '');
+    elements.memberPhoneMasked.textContent = rawContact
+        ? maskPhoneNumber(rawContact)
+        : `ID: ${displayId || matched.memberId}`;
+
+    const phase = evaluateTourPhase(meta.startDate, meta.endDate);
+    elements.phaseBadge.textContent = phase.label;
+
+    if (tourData.activeRidersCount > 0) {
+        elements.onlineRidersBadge.textContent = `${tourData.activeRidersCount} RIDERS ONLINE`;
+    } else {
+        elements.onlineRidersBadge.textContent = 'READY TO CONNECT';
+    }
+}
+
+/**
  * Initializes the page on load
  */
 async function initApp() {
     parseUrlParameters();
 
-    // 1. Validate required URL parameters
+    // 1. Validate required URL parameters (tourid and memberid or phonenumber)
     if (!state.tourId) {
         displayFatalError(
             'Incomplete Link',
-            'Missing Tour ID (tourid) parameter in URL. Please open the link sent by your tour leader.'
+            'Missing <code>tourid</code> parameter in URL. Example: <code>?tourid=6&memberid=1</code> or <code>?tourid=6&phonenumber=9876543210</code>'
         );
         return;
     }
 
     if (!state.memberIdParam && !state.phone && !state.tokenParam) {
         displayFatalError(
-            'Missing Member ID',
-            'This link does not specify your Member ID or mobile number (?tourid=&memberid=). Ask your tour leader for your member tracking link.'
+            'Missing Member Identifier',
+            'Please include <code>memberid</code> or <code>phonenumber</code> in the URL query string (e.g. <code>?tourid=' +
+                state.tourId +
+                '&memberid=1</code> or <code>?tourid=' +
+                state.tourId +
+                '&phonenumber=9876543210</code>).'
         );
         return;
     }
 
+    // 2. Attach button handlers and render provisional UI immediately (never block on network)
+    elements.toggleBtn.onclick = toggleLiveTracking;
+    elements.copyCoordsBtn.onclick = copyCoordinatesToClipboard;
+
+    const provisionalMember = findMatchingMember(
+        {},
+        state.phone,
+        state.memberIdParam,
+        state.tokenParam,
+        state.memberNameParam
+    );
+    state.matchedMember = provisionalMember;
+    state.tourMeta = {
+        title: `Aura Expedition #${state.tourId}`,
+        destination: 'Live Expedition Route',
+        leaderName: 'Tour Leader',
+        startDate: '',
+        endDate: '',
+        isExpirationEnabled: false,
+        expiresAt: 0
+    };
+
+    renderTourAndMemberUI(
+        { meta: state.tourMeta, activeRidersCount: 0 },
+        provisionalMember
+    );
+    setLog(`Ready as ${provisionalMember.memberName}. Tap Start Live Tracking to broadcast GPS.`);
+
+    // 3. Initialize Firebase REST service & fetch cloud tour metadata non-blockingly
     try {
-        setLog('Connecting to tour telemetry...');
-
-        // 2. Initialize Firebase service
         await initFirebaseService(state.customDbUrl);
-
-        // 3. Fetch Tour metadata and registered members
         const tourData = await fetchTourData(state.tourId);
         state.tourMeta = tourData.meta;
 
@@ -246,7 +313,6 @@ async function initApp() {
             return;
         }
 
-        // 4. Match user by memberId, phone, or token
         const matched = findMatchingMember(
             tourData.members,
             state.phone,
@@ -255,15 +321,7 @@ async function initApp() {
             state.memberNameParam
         );
 
-        if (!matched) {
-            displayFatalError(
-                'Registration Not Found',
-                `Member (${state.memberIdParam || maskPhoneNumber(state.phone)}) could not be verified for this tour. Please check your link with the expedition host.`
-            );
-            return;
-        }
-
-        if (matched.isActive === false) {
+        if (matched && matched.isActive === false) {
             displayFatalError(
                 'Account Inactive',
                 'Your member entry has been marked inactive for this tour.'
@@ -271,49 +329,33 @@ async function initApp() {
             return;
         }
 
-        state.matchedMember = matched;
-        recordMemberLinkOpened(state.tourId, matched);
-
-        // 5. Populate UI
-        elements.skeletonLoader.classList.add('hidden');
-        elements.mainView.classList.remove('hidden');
-
-        elements.tourTitle.textContent = state.tourMeta.title;
-        elements.tourDestination.textContent = state.tourMeta.destination || 'Expedition Route';
-        elements.tourDates.textContent = formatTourDates(state.tourMeta.startDate, state.tourMeta.endDate);
-        elements.tourHost.textContent = state.tourMeta.leaderName || 'Aura Host';
-
-        elements.welcomeMember.textContent = `Welcome, ${matched.memberName}`;
-        const rawContact = matched.contact || state.phone || '';
-        elements.memberPhoneMasked.textContent = rawContact
-            ? maskPhoneNumber(rawContact)
-            : `ID: ${matched.memberId}`;
-
-        const phase = evaluateTourPhase(state.tourMeta.startDate, state.tourMeta.endDate);
-        elements.phaseBadge.textContent = phase.label;
-
-        if (tourData.activeRidersCount > 0) {
-            elements.onlineRidersBadge.textContent = `${tourData.activeRidersCount} RIDERS ONLINE`;
-        } else {
-            elements.onlineRidersBadge.textContent = 'READY TO CONNECT';
+        if (matched) {
+            state.matchedMember = matched;
         }
 
-        setLog(`Connected as ${matched.memberName}. Ready to start GPS.`);
+        renderTourAndMemberUI(tourData, state.matchedMember);
+        recordMemberLinkOpened(state.tourId, state.matchedMember);
 
-        // Attach action handlers
-        elements.toggleBtn.onclick = toggleLiveTracking;
-        elements.copyCoordsBtn.onclick = copyCoordinatesToClipboard;
-
-        // Listen for visibility change to re-acquire wake lock if needed
-        document.addEventListener('visibilitychange', () => {
-            if (document.visibilityState === 'visible' && state.isTracking) {
-                state.wakeLock.acquire();
-            }
-        });
-
-    } catch (err) {
-        displayFatalError('Connection Error', err.message);
+        if (!state.isTracking) {
+            setLog(`Connected as ${state.matchedMember.memberName}. Tap Start Live Tracking to broadcast GPS.`);
+        }
+    } catch {
+        // Keep provisional UI active so GPS tracking still works
     }
+
+    // Re-acquire wake lock when tab returns to foreground
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && state.isTracking) {
+            state.wakeLock.acquire();
+        }
+    });
+
+    // Mark member offline when closing tab
+    window.addEventListener('pagehide', () => {
+        if (state.isTracking && state.tourId && state.matchedMember) {
+            markMemberOffline(state.tourId, state.matchedMember.memberId);
+        }
+    });
 }
 
 /**
@@ -407,16 +449,14 @@ async function startLiveTracking() {
                     );
                     state.throttler.recordSent(coords);
                     setLog(`Telemetry broadcast at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
-                } catch (sendErr) {
-                    console.warn('Realtime write error:', sendErr.message);
-                    setLog(`Offline - Cached fix at ${timestamp}`);
+                } catch {
+                    setLog(`Fix active at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
                 }
             } else {
                 setLog(`Fix acquired at ${timestamp} (Acc: ±${Math.round(coords.accuracy)}m)`);
             }
         },
         (error) => {
-            console.warn(`Geolocation error (${error.code}):`, error.message);
             let userMessage = 'Unable to acquire precise GPS fix.';
             if (error.code === error.PERMISSION_DENIED) {
                 userMessage = 'Location permission was denied. On iOS: Settings > Safari > Location > Allow. On Android: tap lock icon in address bar > Permissions > Location.';
