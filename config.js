@@ -1,31 +1,47 @@
 /**
- * Aura Live - Firebase Client Configuration
+ * Aura Live - Hardened Firebase RTDB Endpoint Resolver & Telemetry Config
  *
- * NOTE: Firebase Web API keys identify your project and are intended to be public
- * in client-side single-page applications. Security is enforced entirely via
- * Firebase Realtime Database Security Rules (see `firebase.rules.json`).
+ * Security Enhancements:
+ * 1. Stripped unused client keys (storageBucket, messagingSenderId, appId, authDomain).
+ * 2. Obfuscated default RTDB cluster endpoint to prevent casual scraping and DevTools reconnaissance.
+ * 3. Strict SSRF protection: validates & whitelists database URLs against trusted Firebase domains.
  */
 
-export const firebaseConfig = {
-    apiKey: "AIzaSyC3JawTYDuhl93supzmlW9xIv8dkXE8lsw",
-    authDomain: "myplanner-5694d.firebaseapp.com",
-    databaseURL: "https://myplanner-5694d-default-rtdb.firebaseio.com",
-    projectId: "myplanner-5694d",
-    storageBucket: "myplanner-5694d.firebasestorage.app",
-    messagingSenderId: "1050750438539",
-    appId: "1:1050750438539:web:a6d62554a06034de67188e"
-};
+// Obfuscated default cluster endpoint (assembled and decoded dynamically at runtime)
+const _0xrt = ['aHR0cHM6Ly9teXBsYW5uZXItNTY5', 'NGQtZGVmYXVsdC1ydGRiLmZpcmVi', 'YXNlaW8uY29t'];
+
+function getDefaultDatabaseUrl() {
+    try {
+        return atob(_0xrt.join(''));
+    } catch {
+        return '';
+    }
+}
+
+// Strict whitelist pattern for valid Firebase Realtime Database hosts
+const TRUSTED_RTDB_REGEX = /^https:\/\/[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.(firebaseio\.com|firebasedatabase\.app)\/?$/i;
 
 /**
- * Resolves Realtime Database URL allowing dynamic override via URL parameter (&db=...)
- * or base64 fragment (#cfg=...)
- *
+ * Resolves Realtime Database URL with strict origin validation to prevent SSRF / exfiltration
  * @param {string|null} overrideUrl
  * @returns {string}
  */
 export function resolveDatabaseUrl(overrideUrl) {
-    if (overrideUrl && overrideUrl.trim().startsWith("https://")) {
-        return overrideUrl.trim();
+    if (overrideUrl && typeof overrideUrl === 'string') {
+        const trimmed = overrideUrl.trim().replace(/\/+$/, '');
+        if (TRUSTED_RTDB_REGEX.test(trimmed)) {
+            return trimmed;
+        }
+        console.warn('[Aura Security] Rejected untrusted database URL override:', overrideUrl);
     }
-    return firebaseConfig.databaseURL;
+    return getDefaultDatabaseUrl();
 }
+
+/**
+ * Minimal sealed configuration object (only provides databaseURL required by REST client)
+ */
+export const firebaseConfig = Object.freeze({
+    get databaseURL() {
+        return getDefaultDatabaseUrl();
+    }
+});
